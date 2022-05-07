@@ -15,15 +15,14 @@ uniform float zoom;
 in vec3 position0;
 in vec3 normal0;
 
-out vec4 Color;
 
 //quries:
 bool isPlane(vec4 object){
-    return object[3] < 0;
+    return object[3] <= 0;
 }
 
 bool isSphere(vec4 object){
-    return object[3] >= 0;
+    return object[3] > 0;
 }
 
 bool isSpotlight(vec4 light){
@@ -41,11 +40,12 @@ bool isInAngle(vec3 sourcePoint, int lightIndex){
 //helper methods:
 vec3 getObjectNormal(int objectIndex, vec3 sourcePoint){
     if(isPlane(objects[objectIndex])){
-        return objects[objectIndex].xyz;
+        return normalize(objects[objectIndex].xyz);
     }
     vec4 sphere = objects[objectIndex];
-    return vec3(2*(sourcePoint.x - sphere.x), 2*(sourcePoint.y - sphere.y), 2*(sourcePoint.z - sphere.z));
+    return -normalize( sourcePoint - objects[objectIndex].xyz);
 }
+
 
 vec3 findPointOnPlane(vec4 plane){
     if(plane[0] != 0){
@@ -59,28 +59,27 @@ vec3 findPointOnPlane(vec4 plane){
 
 //Find intersections
 float calulateSphereIntersection(vec4 sphere, vec3 sourcePoint, vec3 v){
+    float t;
     vec3 sphereCenter = sphere.xyz;
-    float L = sqrt(dot(sphereCenter - sourcePoint, sphereCenter - sourcePoint));
-    float tm = sqrt(dot(L * v, L * v));
-    float d = sqrt(L*L - tm*tm);
+    vec3 L = sphereCenter - sourcePoint;
+    float tm = dot(L,v);
+    float d = sqrt(dot(L,L) - tm*tm);
     float r = sphere[3];
     if(d > r){
         return -1.0;
     }
-    float th = sqrt(r*r - d*d);
-    float t1 = tm - th;
-    float t2 = tm + th;
-    float t = min(t1, t2);
-    if(t < 0){
-        return -1.0;
+    if(tm >= 0){
+        t = tm - sqrt(r*r - d*d);
+    }else{
+        t = tm + sqrt(r*r - d*d);
     }
     return t;
 }
 
 float calulatePlaneIntersection(vec4 plane, vec3 sourcePoint, vec3 v){
-    vec3 normal = plane.xyz;
-    vec3 point = findPointOnPlane(plane);
-    float t = dot(normal, (point - sourcePoint)) / dot(normal,v);
+    vec3 n = normalize(plane.xyz);
+    vec3 p0o = -plane.w*n/length(plane.xyz) - sourcePoint;
+    float t = dot(n,p0o)/dot(n,v);
     if(t < 0){
         return -1.0;
     }
@@ -89,10 +88,10 @@ float calulatePlaneIntersection(vec4 plane, vec3 sourcePoint, vec3 v){
 
 
 vec2 intersection(int objectIndex ,vec3 sourcePoint, vec3 v){
-    float min_t = 0;
-    int object_i = 0;
+    float min_t = 1.0e10;
+    int object_i = -1;
     float t = 0;
-    for(int i = 0 ; i < sizes[0] ; i++){
+    for(int i = 0 ; i < sizes.x ; i++){
         if(i == objectIndex){
             continue;
         }
@@ -101,15 +100,14 @@ vec2 intersection(int objectIndex ,vec3 sourcePoint, vec3 v){
         }else{
             t = calulatePlaneIntersection(objects[i], sourcePoint, v);
         }
-        if(t < 0){
-            continue;
-        }
-        if(t <= min_t){
+
+        if(t>0 && t <= min_t){
             min_t = t;
             object_i = i;
         }
     }
     return vec2(min_t, object_i);
+
 }
 
 
@@ -132,54 +130,54 @@ bool inSpolight(vec3 sourcePoint, int objectIndex, int lightIndex){
     return !(isObjectBlocked(sourcePoint, lightsPosition[lightIndex].xyz, objectIndex)) && isInAngle(sourcePoint, lightIndex);
 }
 
-vec4 calcDiffuseLight(vec3 sourcePoint, int objectIndex, int lightIndex){
-    vec3 N = normalize(getObjectNormal(objectIndex, sourcePoint));
+vec3 calcDiffuseLight(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
+    vec3 N = getObjectNormal(objectIndex, sourcePoint);
     vec3 L = normalize(lightsDirection[lightIndex].xyz);
     float k_s = 1;
-    if(isPlane(objects[objectIndex]) && (mod(int(1.5*position0.x),2) == mod(int(1.5*position0.y),2))){
+    if(isPlane(objects[objectIndex]) && (((mod(int(1.5*sourcePoint.x),2) == mod(int(1.5*sourcePoint.y),2)) && ((sourcePoint.x>0 && sourcePoint.y>0) || (sourcePoint.x<0 && sourcePoint.y<0))) || ((mod(int(1.5*sourcePoint.x),2) != mod(int(1.5*sourcePoint.y),2) && ((sourcePoint.x<0 && sourcePoint.y>0) || (sourcePoint.x>0 && sourcePoint.y<0)))))){
         k_s = 0.5;
     }
-    vec4 lightColor = lightsIntensity[lightIndex];
-    return k_s * objColors[objectIndex] * dot(N, L) * lightColor;
+    return clamp(k_s * objColors[objectIndex].rgb * dot(N, v) * lightsIntensity[lightIndex].rgb,0,1);
 }
 
-vec4 calcSpecularLight(vec3 sourcePoint, int objectIndex, int lightIndex){
+vec3 calcSpecularLight(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
     float k_s = 0.7;
     vec3 N = getObjectNormal(objectIndex, sourcePoint);
     vec3 lightDirection = lightsDirection[lightIndex].xyz;
-    vec3 R = lightDirection - 2 * N * dot(lightDirection, N);
-    vec3 V = eye.xyz - sourcePoint;
+    vec3 R = normalize(reflect(v, N));
     float power = objColors[objectIndex].w;
 
-    return k_s * pow(dot(V, R), power) * lightsIntensity[lightIndex];
+    return clamp(k_s * pow(dot(v, R), power) * lightsIntensity[lightIndex].rgb,0,1);
 
 }
 
 
-vec4 calcSpotlightEfect(vec3 sourcePoint, int objectIndex, int lightIndex){
+vec3 calcSpotlightEfect(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
     if(inSpolight(sourcePoint, objectIndex, lightIndex)){
-        return calcDiffuseLight(sourcePoint, objectIndex, lightIndex) + calcSpecularLight(sourcePoint, objectIndex, lightIndex);
+        return calcDiffuseLight(sourcePoint, objectIndex, lightIndex, v) + calcSpecularLight(sourcePoint, objectIndex, lightIndex, v);
     }
-    return vec4(0, 0, 0, 1);
+    return vec3(0, 0, 0);
 }
 
-vec4 calcDirectionallightEfect(vec3 sourcePoint, int objectIndex, int lightIndex){
-    vec2 t = intersection(objectIndex, sourcePoint, -(lightsDirection[lightIndex].xyz));
-    if(t[0] != 0){
-        return vec4(0, 0, 0, 1);
+vec3 calcDirectionallightEfect(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
+    vec2 t = intersection(objectIndex, sourcePoint, -normalize(lightsDirection[lightIndex].xyz));
+    if(t[1] != -1){
+        return vec3(0, 0, 0);
     }
-
-    return calcDiffuseLight(sourcePoint, objectIndex, lightIndex) + calcSpecularLight(sourcePoint, objectIndex, lightIndex);
+    vec3 dist = sourcePoint - position0;
+    vec3 lightDir = lightsDirection[lightIndex].xyz;
+    vec3 Il = lightsIntensity[lightIndex].xyz * dot(dist,lightDir);
+    return  calcDiffuseLight(sourcePoint, objectIndex, lightIndex, v) + calcSpecularLight(sourcePoint, objectIndex, lightIndex, v);
 
 }
 
-vec4 calculateLights(vec3 sourcePoint, int objectIndex){
-    vec4 color = ambient;
+vec3 calculateLights(vec3 sourcePoint, int objectIndex, vec3 v){
+    vec3 color = ambient.rgb * objColors[objectIndex].rgb;
     for(int i = 0; i < sizes[1]; i++){
         if(isSpotlight(lightsDirection[i])){
-            color += calcSpotlightEfect(sourcePoint, objectIndex, i );
+            color += calcSpotlightEfect(sourcePoint, objectIndex, i, v);
         }else{
-            color += calcDirectionallightEfect(sourcePoint, objectIndex, i);
+            color += calcDirectionallightEfect(sourcePoint, objectIndex, i, v);
         }
     }
     return color;
@@ -187,13 +185,27 @@ vec4 calculateLights(vec3 sourcePoint, int objectIndex){
 
 
 void main(){
-    vec3 p0 = eye.xyz;
-    vec3 v = position0 - p0;
-    vec2 t = intersection(-1, p0, v);
-    int objectIndex = int(t.y);
-    vec3 sourcePoint = p0 + t[1] * v;
-    vec4 Color = clamp(calculateLights(sourcePoint, objectIndex), 0, 1);
 
+    vec3 v = normalize( position0  - eye.xyz);
+    vec2 t = intersection(-1, position0 ,v);
+    vec3 sourcePoint = position0 + t.x * v;
+    if(t.y < 0){
+        discard;
+    }else{
+        int rep = 5;
+        vec3 point = sourcePoint;
+        vec3 n;
+        while(rep > 0 && t.y < sizes.z-1){
+            n = getObjectNormal(int(t.y), point);
+            v = normalize(reflect(v,n));
+            t = intersection(int(t.y), point, v);
+            rep--;
+            point = point + t.x * v;
+        }
+
+
+        gl_FragColor = vec4(calculateLights(point, int(t.y), v),1);
+    }
 }
  
 

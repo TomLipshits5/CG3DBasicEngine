@@ -15,7 +15,7 @@ static void printMat(const Eigen::Matrix4d& mat)
 
 Assignment2::Assignment2()
 {
-	SceneParser("/home/tomcooll/Desktop/Personal/Computer Science/Semester_D/Computer_Graphics_Engine/tutorial/Assignment2/scene1.txt", &scnData);
+	SceneParser("/home/tomcooll/Desktop/Personal/Computer Science/Semester_D/Computer_Graphics_Engine/tutorial/Assignment2/scene4.txt", &scnData);
 }
 
 void Assignment2::Init()
