@@ -15,7 +15,7 @@ static void printMat(const Eigen::Matrix4d& mat)
 
 Assignment2::Assignment2()
 {
-	SceneParser("/home/tomcooll/Desktop/Personal/Computer Science/Semester_D/Computer_Graphics_Engine/tutorial/Assignment2/scene4.txt", &scnData);
+	SceneParser("/home/tomcooll/Desktop/Personal/Computer Science/Semester_D/Computer_Graphics_Engine/tutorial/Assignment2/scene1.txt", &scnData);
 }
 
 void Assignment2::Init()
@@ -60,6 +60,8 @@ void Assignment2::Update(const Eigen::Matrix4f& Proj, const Eigen::Matrix4f& Vie
 	if (shaderIndx == 0)
 		s->SetUniform4f("lightColor", r / 255.0f, g / 255.0f, b / 255.0f, 0.0f);
 	else {
+        pixelSize = getPixelSize(800, 800);
+        s->SetUniform4f("pixelSize", pixelSize[0], pixelSize[1], pixelSize[2], pixelSize[3]);
 		s->SetUniform4f("lightColor", 4 / 100.0f, 60 / 100.0f, 99 / 100.0f, 0.5f);
 		s->SetUniform4f("eye", scnData.eye[0], scnData.eye[1], scnData.eye[2], scnData.eye[3]);
 		s->SetUniform4f("ambient", scnData.ambient[0], scnData.ambient[1], scnData.ambient[2], scnData.ambient[3]);
@@ -71,6 +73,12 @@ void Assignment2::Update(const Eigen::Matrix4f& Proj, const Eigen::Matrix4f& Vie
 		s->SetUniform4i("sizes", scnData.sizes[0], scnData.sizes[1], scnData.sizes[2], scnData.sizes[3]);
 	}
 	s->Unbind();
+}
+
+Eigen::Vector4f Assignment2::getPixelSize( const float display_width, const float display_height) const {
+    float width_of_each_pixel = (1.0 /display_width) * (1.0 / zoom); // 1200 is the Width of the current window
+    float height_of_each_pixel = (1.0/display_height) * (1.0 / zoom);
+    return {height_of_each_pixel, width_of_each_pixel, 0, 0};
 }
 
 

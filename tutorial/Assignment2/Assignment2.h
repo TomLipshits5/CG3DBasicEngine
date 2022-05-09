@@ -8,8 +8,9 @@ class Assignment2 : public igl::opengl::glfw::Viewer
 	
 public:
 	Eigen::Vector4f move;
-	float zoom;
+	float zoom = 1;
 	float x, y;
+    Eigen::Vector4f pixelSize;
 	SceneData scnData;
 	Assignment2();
 //	Assignment2(float angle,float relationWH,float near, float far);
@@ -26,6 +27,10 @@ public:
 	void ScaleAllShapes(float amt, int viewportIndx);
 	
 	~Assignment2(void);
+
+
+
+    Eigen::Vector4f getPixelSize(const float dispaly_width, const float display_hight) const;
 };
 
 

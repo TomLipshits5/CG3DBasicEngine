@@ -8,6 +8,7 @@ uniform vec4[10] lightsDirection;
 uniform vec4[10] lightsIntensity;
 uniform vec4[10] lightsPosition;
 uniform ivec4 sizes;
+uniform vec4 pixelSize;
 
 uniform vec4 move;
 uniform float zoom;
@@ -29,11 +30,8 @@ bool isSpotlight(vec4 light){
     return light[3] == 1.0;
 }
 
-bool isInAngle(vec3 sourcePoint, int lightIndex){
-    vec3 lightDirection = lightsDirection[lightIndex].xyz;
-    vec3 lightToObject = sourcePoint - lightsPosition[lightIndex].xyz;
-    float cosTheta = dot(lightDirection, lightToObject) / dot(normalize(lightDirection), normalize(lightToObject));
-    return cosTheta >= lightsPosition[lightIndex].w;
+bool isPointlight(vec4 light){
+    return light[3] > 1.0;
 }
 
 
@@ -110,24 +108,26 @@ vec2 intersection(int objectIndex ,vec3 sourcePoint, vec3 v){
 
 }
 
-
+bool isInAngle(vec3 sourcePoint, int lightIndex){
+    vec3 lightDirection = normalize(lightsDirection[lightIndex].xyz);
+    vec3 lightToObject = normalize(sourcePoint - lightsPosition[lightIndex].xyz);
+    float cosTheta =  dot(lightDirection, lightToObject);
+    float theta = acos(cosTheta);
+    float alpha = acos(lightsPosition[lightIndex].w);
+    return theta <= alpha;
+}
 
 bool isObjectBlocked(vec3 sourcePoint, vec3 lightPos, int objectIndex){
-    vec3 v = lightPos - sourcePoint;
-    float distToLight = sqrt(dot(v, v));
-    vec2 t = intersection(objectIndex, sourcePoint, v);
-    if(t[0] == 0){
+    vec3 v = sourcePoint - lightPos;
+    vec2 t = intersection(-1, lightPos, normalize(v));
+    if(t.y == objectIndex){
         return false;
     }
-    vec3 intersectionPoint = sourcePoint + t[0] * v;
-    vec3 vecToIntersectionPoint = intersectionPoint-sourcePoint;
-    float distToIntersectionPoint = sqrt(dot(vecToIntersectionPoint, vecToIntersectionPoint));
-
-    return distToIntersectionPoint < distToLight;
+    return true;
 }
 
 bool inSpolight(vec3 sourcePoint, int objectIndex, int lightIndex){
-    return !(isObjectBlocked(sourcePoint, lightsPosition[lightIndex].xyz, objectIndex)) && isInAngle(sourcePoint, lightIndex);
+    return (!(isObjectBlocked(sourcePoint, lightsPosition[lightIndex].xyz, objectIndex))) && isInAngle(sourcePoint, lightIndex);
 }
 
 vec3 calcDiffuseLight(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
@@ -137,7 +137,7 @@ vec3 calcDiffuseLight(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v)
     if(isPlane(objects[objectIndex]) && (((mod(int(1.5*sourcePoint.x),2) == mod(int(1.5*sourcePoint.y),2)) && ((sourcePoint.x>0 && sourcePoint.y>0) || (sourcePoint.x<0 && sourcePoint.y<0))) || ((mod(int(1.5*sourcePoint.x),2) != mod(int(1.5*sourcePoint.y),2) && ((sourcePoint.x<0 && sourcePoint.y>0) || (sourcePoint.x>0 && sourcePoint.y<0)))))){
         k_s = 0.5;
     }
-    return clamp(k_s * objColors[objectIndex].rgb * dot(N, v) * lightsIntensity[lightIndex].rgb,0,1);
+    return clamp((k_s * objColors[objectIndex].rgb * dot(N, v) * lightsIntensity[lightIndex].rgb),0,1);
 }
 
 vec3 calcSpecularLight(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
@@ -159,15 +159,19 @@ vec3 calcSpotlightEfect(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 
     return vec3(0, 0, 0);
 }
 
+vec3 calcPointlightEfect(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
+    if(!isObjectBlocked(sourcePoint, lightsPosition[lightIndex].xyz, objectIndex)){
+        return calcDiffuseLight(sourcePoint, objectIndex, lightIndex, v) + calcSpecularLight(sourcePoint, objectIndex, lightIndex, v);
+    }
+    return vec3(0, 0, 0);
+}
+
 vec3 calcDirectionallightEfect(vec3 sourcePoint, int objectIndex, int lightIndex, vec3 v){
     vec2 t = intersection(objectIndex, sourcePoint, -normalize(lightsDirection[lightIndex].xyz));
-    if(t[1] != -1){
+    if(t.y > 0 && objects[int(t.y)].w > 0){
         return vec3(0, 0, 0);
     }
-    vec3 dist = sourcePoint - position0;
-    vec3 lightDir = lightsDirection[lightIndex].xyz;
-    vec3 Il = lightsIntensity[lightIndex].xyz * dot(dist,lightDir);
-    return  calcDiffuseLight(sourcePoint, objectIndex, lightIndex, v) + calcSpecularLight(sourcePoint, objectIndex, lightIndex, v);
+    return calcDiffuseLight(sourcePoint, objectIndex, lightIndex, v) + calcSpecularLight(sourcePoint, objectIndex, lightIndex, v);
 
 }
 
@@ -176,6 +180,8 @@ vec3 calculateLights(vec3 sourcePoint, int objectIndex, vec3 v){
     for(int i = 0; i < sizes[1]; i++){
         if(isSpotlight(lightsDirection[i])){
             color += calcSpotlightEfect(sourcePoint, objectIndex, i, v);
+        }else if (isPointlight(lightsDirection[i])){
+            color += calcPointlightEfect(sourcePoint, objectIndex, i, v);
         }else{
             color += calcDirectionallightEfect(sourcePoint, objectIndex, i, v);
         }
@@ -183,29 +189,57 @@ vec3 calculateLights(vec3 sourcePoint, int objectIndex, vec3 v){
     return color;
 }
 
-
-void main(){
-
-    vec3 v = normalize( position0  - eye.xyz);
-    vec2 t = intersection(-1, position0 ,v);
-    vec3 sourcePoint = position0 + t.x * v;
+vec4 calculateColor(vec3 position){
+    vec3 v = normalize( position  - eye.xyz);
+    vec2 t = intersection(-1, position ,v);
+    vec3 sourcePoint = position + t.x * v;
     if(t.y < 0){
         discard;
     }else{
         int rep = 5;
-        vec3 point = sourcePoint;
+        int source_object = int(t.y);
+        vec3 reflection_point = sourcePoint;
+        vec3 reflection_v =v;
+        vec2 t_reflection = t;
         vec3 n;
-        while(rep > 0 && t.y < sizes.z-1){
-            n = getObjectNormal(int(t.y), point);
-            v = normalize(reflect(v,n));
-            t = intersection(int(t.y), point, v);
+        while(rep > 0 && t_reflection.y < sizes.z ){
+            n = getObjectNormal(int(t_reflection.y), reflection_point);
+            vec3 u = normalize(reflect(reflection_v,n));
+            vec2 tm = intersection(int(t_reflection.y), reflection_point, u);
             rep--;
-            point = point + t.x * v;
+            reflection_v = u;
+            t_reflection = tm;
+            reflection_point = reflection_point + t_reflection.x * reflection_v;
+            if(t_reflection.y < 0){
+                break;
+            }
         }
 
 
-        gl_FragColor = vec4(calculateLights(point, int(t.y), v),1);
+        if(int(t_reflection.y) >= 0) {
+            return vec4(calculateLights(reflection_point, int(t_reflection.y), reflection_v),1);
+        }else if(t.y < sizes.z){
+            return vec4(0,0,0,1);
+        }else{
+            return vec4(calculateLights(sourcePoint, int(t.y), v),1);
+        }
     }
+}
+
+void main(){
+    float y_diff = pixelSize[0]/2;
+    float x_diff = pixelSize[1]/2;
+    vec4 color1 = calculateColor(position0 + vec3(x_diff, 0,0));
+    vec4 color2 = calculateColor(position0 - vec3(x_diff, 0,0));
+    vec4 color3 = calculateColor(position0 + vec3(0, y_diff, 0));
+    vec4 color4 = calculateColor(position0 - vec3(0, y_diff, 0));
+    vec4 color5 = calculateColor(position0 + vec3(x_diff, y_diff,0));
+    vec4 color6 = calculateColor(position0 + vec3(x_diff, -y_diff,0));
+    vec4 color7 = calculateColor(position0 + vec3(-x_diff, y_diff, 0));
+    vec4 color8 = calculateColor(position0 + vec3(-x_diff, -y_diff, 0));
+    vec4 color9 = calculateColor(position0);
+    gl_FragColor = (color1 + color2 + color3 + color4 + color5 + color6 + color7 + color8 + color9) / 9;
+
 }
  
 
